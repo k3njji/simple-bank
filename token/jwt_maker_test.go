@@ -33,7 +33,7 @@ func TestJWTMaker(t *testing.T) {
 }
 
 func TestExpiredJWTToken(t *testing.T) {
-	maker, err := NewJWTMaker(util.RandomString(33))
+	maker, err := NewJWTMaker(util.RandomString(32))
 	require.NoError(t, err)
 
 	username := util.RandomOwner()

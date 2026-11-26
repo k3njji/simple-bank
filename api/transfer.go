@@ -1,3 +1,4 @@
+
 package api
 
 import (
@@ -5,13 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	db "simple_bank/db/sqlc"
+	"simple_bank/token"
+
 	"github.com/gin-gonic/gin"
 )
 
 type TransferTxParams struct {
-	FromAccountID int64  `json:"from_account_id"`
-	ToAccountID   int64  `json:"to_account_id"`
-	Amount        int64  `json:"amount"`
+	FromAccountID int64  `json:"from_account_id" binding:"required,min=1"`
+	ToAccountID   int64  `json:"to_account_id" binding:"required,min=1"`
+	Amount        int64  `json:"amount" binding:"required,min=1"`
 	Currency      string `json:"currency" binding:"required,currency"`
 }
 
@@ -23,11 +26,27 @@ func (server *Server) createTransfer(ctx *gin.Context) {
 		return
 	}
 
-	if !server.validAccount(ctx, req.FromAccountID, req.Currency) {
+	if req.FromAccountID == req.ToAccountID {
+		err := fmt.Errorf("cannot transfer to the same account")
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
 		return
 	}
 
-	if !server.validAccount(ctx, req.ToAccountID, req.Currency) {
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+
+	fromAccount, ok := server.validAccount(ctx, req.FromAccountID, req.Currency)
+	if !ok {
+		return
+	}
+
+	if fromAccount.Owner != authPayload.Username {
+		err := fmt.Errorf("source account doesn't belong to the authenticated user")
+		ctx.JSON(http.StatusForbidden, errorResponse(err))
+		return
+	}
+
+	_, ok = server.validAccount(ctx, req.ToAccountID, req.Currency)
+	if !ok {
 		return
 	}
 
@@ -46,23 +65,27 @@ func (server *Server) createTransfer(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, transfer)
 }
 
-func (server *Server) validAccount(ctx *gin.Context, accountID int64, currency string) bool {
+func (server *Server) validAccount(ctx *gin.Context, accountID int64, currency string) (db.Account, bool) {
 	account, err := server.store.GetAccount(ctx, accountID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			ctx.JSON(http.StatusNotFound, errorResponse(err))
-			return false
+			return account, false
 		}
 
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-		return false
+		return account, false
 	}
 
 	if account.Currency != currency {
-		err := fmt.Errorf("account currency mismatch: expected %s, got %s", currency, account.Currency)
+		err := fmt.Errorf(
+			"account currency mismatch: expected %s, got %s",
+			currency,
+			account.Currency,
+		)
 		ctx.JSON(http.StatusBadRequest, errorResponse(err))
-		return false
+		return account, false
 	}
 
-	return true
+	return account, true
 }
